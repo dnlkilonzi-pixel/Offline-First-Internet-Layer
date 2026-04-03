@@ -3,224 +3,544 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Offline-First Internet Layer</title>
+  <title>OFIL — Offline-First Internet Layer</title>
   <style>
     :root {
-      --bg: #0f172a;
-      --surface: #1e293b;
-      --border: #334155;
+      --bg: #0b1120;
+      --surface: #131e2f;
+      --surface2: #1a2840;
+      --border: #263248;
       --accent: #38bdf8;
+      --accent2: #818cf8;
       --green: #4ade80;
+      --yellow: #fbbf24;
       --red: #f87171;
+      --orange: #fb923c;
       --text: #e2e8f0;
-      --muted: #94a3b8;
-      --radius: 8px;
+      --muted: #64748b;
+      --radius: 10px;
+      --radius-sm: 6px;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: system-ui, -apple-system, sans-serif;
+      font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
       background: var(--bg);
       color: var(--text);
       min-height: 100vh;
+      overflow: hidden;
     }
-    header {
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
+
+    /* ─── TOAST ────────────────────────────────────────────────────────────── */
+    #toast {
+      position: fixed;
+      top: 18px;
+      right: 20px;
+      z-index: 999;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .toast-item {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: var(--radius-sm);
+      padding: 10px 16px;
+      font-size: 0.82rem;
+      color: var(--text);
+      box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+      animation: slideIn 0.2s ease;
+      max-width: 320px;
+    }
+    .toast-item.success { border-left-color: var(--green); }
+    .toast-item.warn    { border-left-color: var(--yellow); }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateX(30px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+
+    /* ─── DEMO GUIDE BANNER ────────────────────────────────────────────────── */
+    #demo-banner {
+      background: linear-gradient(135deg, #0f2044 0%, #1a1040 100%);
+      border-bottom: 1px solid #2a3a5e;
+      padding: 0;
+      overflow: hidden;
+      transition: max-height 0.35s ease;
+      max-height: 200px;
+    }
+    #demo-banner.collapsed { max-height: 0; }
+    .demo-inner {
       padding: 14px 24px;
       display: flex;
       align-items: center;
-      gap: 16px;
+      gap: 24px;
+      flex-wrap: wrap;
     }
-    header h1 { font-size: 1.1rem; font-weight: 700; letter-spacing: 0.02em; }
-    .badge {
-      display: inline-flex;
+    .demo-title {
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent2);
+      white-space: nowrap;
+    }
+    .demo-steps {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      flex: 1;
+    }
+    .demo-step {
+      display: flex;
       align-items: center;
       gap: 6px;
-      font-size: 0.75rem;
-      font-weight: 600;
-      padding: 3px 10px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid #2a3a5e;
       border-radius: 999px;
-      background: var(--border);
+      padding: 4px 12px;
+      font-size: 0.76rem;
+      color: var(--text);
+      white-space: nowrap;
     }
-    .badge .dot {
-      width: 8px; height: 8px;
+    .demo-step .num {
+      background: var(--accent2);
+      color: #0b1120;
+      border-radius: 50%;
+      width: 18px; height: 18px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.68rem;
+      font-weight: 800;
+      flex-shrink: 0;
+    }
+    .demo-close {
+      margin-left: auto;
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 1rem;
+      padding: 4px 8px;
+      border-radius: 4px;
+      flex-shrink: 0;
+    }
+    .demo-close:hover { color: var(--text); background: var(--border); }
+
+    /* ─── HEADER ────────────────────────────────────────────────────────────── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-shrink: 0;
+    }
+    .header-logo { font-size: 1rem; font-weight: 800; letter-spacing: 0.02em; display: flex; align-items: center; gap: 8px; }
+    .header-logo .ofil { color: var(--accent); }
+    .node-id {
+      font-size: 0.72rem;
+      color: var(--muted);
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+    .node-id .nid { color: var(--accent2); }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.73rem;
+      font-weight: 600;
+      padding: 4px 11px;
+      border-radius: 999px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      transition: all 0.3s ease;
+    }
+    .status-pill .dot {
+      width: 7px; height: 7px;
       border-radius: 50%;
       background: var(--muted);
+      flex-shrink: 0;
     }
-    .badge.online .dot  { background: var(--green); }
-    .badge.offline .dot { background: var(--red); }
-    .badge.online  { color: var(--green); }
-    .badge.offline { color: var(--red); }
+    .status-pill.online  { border-color: #1a3a28; background: #0d2318; color: var(--green); }
+    .status-pill.online .dot  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .status-pill.offline { border-color: #3a1a1a; background: #230d0d; color: var(--red); }
+    .status-pill.offline .dot { background: var(--red); }
 
+    .tier-pill {
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 3px 9px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--muted);
+    }
+    .tier-pill.lan     { color: var(--green);  border-color: #1a3a28; background: #0d2318; }
+    .tier-pill.wan     { color: var(--accent);  border-color: #0e2e3a; background: #071e28; }
+    .tier-pill.hotspot { color: var(--yellow); border-color: #3a2e0e; background: #281e07; }
+    .tier-pill.none    { color: var(--red);    border-color: #3a1a1a; background: #230d0d; }
+
+    #queue-badge {
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: #2d1a00;
+      border: 1px solid #4a3010;
+      color: var(--orange);
+      display: none;
+    }
+    #queue-badge.visible { display: inline-flex; align-items: center; gap: 5px; }
+
+    .header-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+
+    .hdr-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      border-radius: var(--radius-sm);
+      padding: 5px 13px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s;
+    }
+    .hdr-btn:hover { border-color: var(--accent); color: var(--text); }
+    .hdr-btn.primary { border-color: var(--accent); color: var(--accent); }
+    .hdr-btn.primary:hover { background: rgba(56,189,248,0.1); }
+    .hdr-btn:disabled { opacity: 0.4; cursor: default; }
+
+    /* ─── LAYOUT ─────────────────────────────────────────────────────────────── */
+    .app-shell {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
     main {
       display: grid;
-      grid-template-columns: 280px 1fr;
-      gap: 0;
-      height: calc(100vh - 53px);
+      grid-template-columns: 260px 1fr 220px;
+      flex: 1;
+      overflow: hidden;
     }
 
-    /* Sidebar */
-    aside {
+    /* ─── LEFT SIDEBAR: PEERS ─────────────────────────────────────────────── */
+    .sidebar-left {
       border-right: 1px solid var(--border);
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      background: var(--surface);
     }
-    aside h2 {
-      font-size: 0.7rem;
+    .sidebar-section-title {
+      font-size: 0.65rem;
       text-transform: uppercase;
-      letter-spacing: 0.1em;
+      letter-spacing: 0.12em;
       color: var(--muted);
-      padding: 14px 16px 8px;
+      padding: 12px 14px 6px;
+      border-bottom: 1px solid var(--border);
     }
     #peers-list {
       list-style: none;
       overflow-y: auto;
       flex: 1;
-      padding: 0 8px 8px;
+      padding: 6px;
     }
     #peers-list li {
       padding: 8px 10px;
-      border-radius: var(--radius);
-      font-size: 0.85rem;
+      border-radius: var(--radius-sm);
+      font-size: 0.82rem;
       display: flex;
       flex-direction: column;
       gap: 2px;
+      cursor: default;
+      transition: background 0.15s;
     }
-    #peers-list li:hover { background: var(--border); }
-    #peers-list .peer-id   { font-weight: 600; font-size: 0.8rem; color: var(--accent); word-break: break-all; }
-    #peers-list .peer-addr { color: var(--muted); font-size: 0.75rem; }
+    #peers-list li:hover { background: var(--surface2); }
+    #peers-list .peer-id   { font-weight: 700; font-size: 0.78rem; color: var(--accent); word-break: break-all; }
+    #peers-list .peer-addr { color: var(--muted); font-size: 0.72rem; font-family: monospace; }
     .empty-hint {
-      padding: 12px 12px;
+      padding: 14px 12px;
       color: var(--muted);
-      font-size: 0.8rem;
+      font-size: 0.78rem;
       font-style: italic;
+      line-height: 1.5;
     }
 
-    /* Chat area */
+    /* ─── CHAT AREA ──────────────────────────────────────────────────────────── */
     .chat-area {
       display: flex;
       flex-direction: column;
+      overflow: hidden;
     }
     #messages {
       flex: 1;
       overflow-y: auto;
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-    .msg {
-      max-width: 70%;
-      padding: 10px 14px;
-      border-radius: var(--radius);
-      background: var(--surface);
-      border: 1px solid var(--border);
-    }
-    .msg.mine {
-      align-self: flex-end;
-      background: #1d4ed8;
-      border-color: #2563eb;
-    }
-    .msg-header {
-      font-size: 0.72rem;
-      color: var(--muted);
-      margin-bottom: 4px;
-      display: flex;
-      gap: 8px;
-      align-items: center;
-    }
-    .msg-header .sender { font-weight: 700; color: var(--accent); }
-    .msg-header .type-tag {
-      background: var(--border);
-      border-radius: 4px;
-      padding: 1px 5px;
-      font-size: 0.68rem;
-    }
-    .msg-body { font-size: 0.9rem; line-height: 1.5; }
-    .synced-icon { margin-left: auto; font-size: 0.7rem; }
-
-    /* Compose */
-    .compose {
-      border-top: 1px solid var(--border);
-      padding: 14px 20px;
+      padding: 18px 20px;
       display: flex;
       flex-direction: column;
       gap: 10px;
     }
-    .compose-row { display: flex; gap: 10px; }
-    .compose input, .compose select, .compose textarea {
-      background: var(--surface);
+    #messages::-webkit-scrollbar { width: 4px; }
+    #messages::-webkit-scrollbar-track { background: transparent; }
+    #messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .msg {
+      max-width: 72%;
+      padding: 10px 14px;
+      border-radius: 14px;
+      border-bottom-left-radius: 4px;
+      background: var(--surface2);
       border: 1px solid var(--border);
-      border-radius: var(--radius);
+      animation: msgIn 0.18s ease;
+    }
+    @keyframes msgIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .msg.mine {
+      align-self: flex-end;
+      background: #132654;
+      border-color: #1e3b7a;
+      border-radius: 14px;
+      border-bottom-right-radius: 4px;
+    }
+    .msg.from-peer {
+      border-left: 3px solid var(--accent2);
+    }
+    .msg.queued {
+      opacity: 0.75;
+      border-style: dashed;
+      border-color: var(--orange);
+    }
+    .msg-header {
+      font-size: 0.68rem;
+      color: var(--muted);
+      margin-bottom: 5px;
+      display: flex;
+      gap: 7px;
+      align-items: center;
+    }
+    .msg-header .sender { font-weight: 800; color: var(--accent); font-size: 0.72rem; }
+    .msg-header .type-tag {
+      background: var(--border);
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-size: 0.64rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .msg-header .lamport {
+      color: var(--accent2);
+      font-size: 0.62rem;
+      font-family: monospace;
+    }
+    .msg-body  { font-size: 0.88rem; line-height: 1.55; word-break: break-word; }
+    .msg-footer {
+      margin-top: 5px;
+      font-size: 0.65rem;
+      color: var(--muted);
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .sync-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: auto;
+    }
+    .sync-status.synced  { color: var(--green); }
+    .sync-status.pending { color: var(--orange); }
+
+    /* ─── COMPOSE ──────────────────────────────────────────────────────────── */
+    .compose {
+      border-top: 1px solid var(--border);
+      padding: 12px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: var(--surface);
+    }
+    .compose-row { display: flex; gap: 8px; }
+    .compose input, .compose select, .compose textarea {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
       color: var(--text);
-      padding: 8px 12px;
-      font-size: 0.9rem;
+      padding: 7px 11px;
+      font-size: 0.87rem;
       outline: none;
+      transition: border-color 0.15s;
     }
     .compose input:focus, .compose select:focus, .compose textarea:focus {
       border-color: var(--accent);
     }
-    .compose input[name=sender] { width: 180px; }
+    .compose input[name=sender] { width: 170px; }
     .compose select { width: 160px; }
     .compose textarea {
       flex: 1;
       resize: none;
-      height: 70px;
+      height: 64px;
       font-family: inherit;
+      line-height: 1.5;
     }
-    .compose button {
+    .send-btn {
       background: var(--accent);
-      color: #0f172a;
+      color: #0b1120;
       border: none;
-      border-radius: var(--radius);
-      padding: 0 20px;
-      font-weight: 700;
+      border-radius: var(--radius-sm);
+      padding: 0 18px;
+      font-weight: 800;
       cursor: pointer;
-      font-size: 0.9rem;
+      font-size: 0.87rem;
       white-space: nowrap;
+      transition: filter 0.15s;
     }
-    .compose button:hover { filter: brightness(1.1); }
-    .compose button:disabled { opacity: 0.5; cursor: default; }
+    .send-btn:hover { filter: brightness(1.12); }
+    .send-btn:disabled { opacity: 0.45; cursor: default; filter: none; }
+    .compose-hint {
+      font-size: 0.67rem;
+      color: var(--muted);
+      padding-left: 2px;
+    }
 
-    /* Sync button */
-    #sync-btn {
-      margin-left: auto;
-      background: transparent;
-      border: 1px solid var(--accent);
+    /* ─── RIGHT SIDEBAR: STATS ────────────────────────────────────────────── */
+    .sidebar-right {
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: var(--surface);
+    }
+    .stats-content {
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .stat-card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+    }
+    .stat-card-title {
+      font-size: 0.62rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 5px;
+    }
+    .stat-label { font-size: 0.72rem; color: var(--muted); }
+    .stat-value { font-size: 0.82rem; font-weight: 700; color: var(--text); font-family: monospace; }
+    .stat-value.green  { color: var(--green); }
+    .stat-value.accent { color: var(--accent); }
+    .stat-value.yellow { color: var(--yellow); }
+
+    .run-bench-btn {
+      width: 100%;
+      margin-top: 6px;
+      background: var(--surface);
+      border: 1px solid var(--border);
       color: var(--accent);
-      border-radius: var(--radius);
-      padding: 5px 14px;
-      font-size: 0.8rem;
+      border-radius: var(--radius-sm);
+      padding: 6px;
+      font-size: 0.73rem;
       cursor: pointer;
-      white-space: nowrap;
+      font-weight: 600;
+      transition: all 0.15s;
     }
-    #sync-btn:hover { background: var(--border); }
+    .run-bench-btn:hover { background: var(--border); }
+    .run-bench-btn:disabled { opacity: 0.4; cursor: default; }
 
-    @media (max-width: 700px) {
+    .stat-loading { color: var(--muted); font-size: 0.72rem; font-style: italic; }
+
+    /* Convergence meter */
+    .convergence-bar-wrap {
+      background: var(--border);
+      border-radius: 3px;
+      height: 6px;
+      overflow: hidden;
+      margin-top: 6px;
+    }
+    .convergence-bar {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent2), var(--green));
+      border-radius: 3px;
+      transition: width 0.6s ease;
+      width: 0%;
+    }
+
+    /* ─── RESPONSIVE ─────────────────────────────────────────────────────────── */
+    @media (max-width: 900px) {
       main { grid-template-columns: 1fr; }
-      aside { display: none; }
+      .sidebar-left, .sidebar-right { display: none; }
     }
   </style>
 </head>
 <body>
+<div class="app-shell">
+
+  <!-- ── DEMO GUIDE BANNER ─────────────────────────────────────────────────── -->
+  <div id="demo-banner">
+    <div class="demo-inner">
+      <span class="demo-title">🎬 Demo Guide</span>
+      <div class="demo-steps">
+        <div class="demo-step"><span class="num">1</span> Run two nodes: <code style="font-size:0.7rem;color:var(--accent)">PORT=3001 npm start</code></div>
+        <div class="demo-step"><span class="num">2</span> Open both in separate browsers</div>
+        <div class="demo-step"><span class="num">3</span> Disconnect internet — messages still work over LAN</div>
+        <div class="demo-step"><span class="num">4</span> Reconnect — watch auto-sync &amp; convergence ✨</div>
+      </div>
+      <button class="demo-close" id="demo-close-btn" title="Hide demo guide">✕</button>
+    </div>
+  </div>
+
+  <!-- ── HEADER ─────────────────────────────────────────────────────────────── -->
   <header>
-    <h1>📡 Offline-First Internet Layer</h1>
-    <span id="status-badge" class="badge offline">
+    <div class="header-logo">
+      📡 <span class="ofil">OFIL</span>
+    </div>
+    <div class="node-id" id="node-id-display">
+      Node: <span class="nid" id="node-id-val">…</span>
+    </div>
+    <span id="status-badge" class="status-pill offline">
       <span class="dot"></span>
       <span id="status-text">Checking…</span>
     </span>
-    <button id="sync-btn" title="Push unsynced messages to remote server">⬆ Sync Now</button>
+    <span class="tier-pill none" id="tier-pill">—</span>
+    <span id="queue-badge">⏳ <span id="queue-count">0</span> queued</span>
+    <div class="header-actions">
+      <button class="hdr-btn" id="demo-toggle-btn" title="Show/hide demo guide">📖 Guide</button>
+      <button class="hdr-btn primary" id="sync-btn" title="Push unsynced messages to remote server">⬆ Sync</button>
+    </div>
   </header>
 
+  <!-- ── MAIN ──────────────────────────────────────────────────────────────── -->
   <main>
-    <aside>
-      <h2>🔗 Local Peers</h2>
+
+    <!-- Left: Peers -->
+    <aside class="sidebar-left">
+      <div class="sidebar-section-title">🔗 Local Peers</div>
       <ul id="peers-list">
-        <li class="empty-hint">No peers found yet. Start another node on your LAN.</li>
+        <li class="empty-hint">No peers yet.<br>Start another node on the same machine or LAN.</li>
       </ul>
     </aside>
 
+    <!-- Centre: Chat -->
     <div class="chat-area">
       <div id="messages"></div>
 
@@ -235,140 +555,385 @@
           </select>
         </div>
         <div class="compose-row">
-          <textarea name="content" placeholder="Type a message…"></textarea>
-          <button id="send-btn">Send</button>
+          <textarea name="content" placeholder="Type a message… (Ctrl+Enter to send)"></textarea>
+          <button class="send-btn" id="send-btn">Send</button>
         </div>
+        <div class="compose-hint">Messages are stored locally and delivered immediately over LAN — even without internet.</div>
       </div>
     </div>
-  </main>
 
-  <script src="/socket.io/socket.io.js"></script>
-  <script>
-    const socket = io();
-    const myName = () => document.querySelector('input[name=sender]').value.trim() || 'Anonymous';
-    const messagesEl = document.getElementById('messages');
-    const peersEl    = document.getElementById('peers-list');
-    const statusBadge = document.getElementById('status-badge');
-    const statusText  = document.getElementById('status-text');
+    <!-- Right: Stats -->
+    <aside class="sidebar-right">
+      <div class="sidebar-section-title">📊 Benchmarks</div>
+      <div class="stats-content">
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
-
-    function escapeHtml(str) {
-      return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    }
-
-    function renderMessage(msg) {
-      const mine = msg.sender === myName();
-      const div = document.createElement('div');
-      div.className = 'msg' + (mine ? ' mine' : '');
-      div.innerHTML = `
-        <div class="msg-header">
-          <span class="sender">${escapeHtml(msg.sender)}</span>
-          <span class="type-tag">${escapeHtml(msg.type || 'general')}</span>
-          <span>${new Date(msg.timestamp).toLocaleTimeString()}</span>
-          <span class="synced-icon" title="${msg.synced ? 'Synced' : 'Pending sync'}">${msg.synced ? '✅' : '🔄'}</span>
+        <div class="stat-card">
+          <div class="stat-card-title">Throughput</div>
+          <div class="stat-row">
+            <span class="stat-label">Write</span>
+            <span class="stat-value green" id="bm-write">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Read</span>
+            <span class="stat-value green" id="bm-read">—</span>
+          </div>
         </div>
-        <div class="msg-body">${escapeHtml(msg.content)}</div>
-      `;
-      messagesEl.appendChild(div);
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
 
-    function renderPeers(peers) {
-      if (peers.length === 0) {
-        peersEl.innerHTML = '<li class="empty-hint">No peers found yet. Start another node on your LAN.</li>';
-        return;
-      }
-      peersEl.innerHTML = peers.map((p) => `
-        <li>
-          <span class="peer-id">${escapeHtml(p.nodeId)}</span>
-          <span class="peer-addr">${escapeHtml(p.ip)}:${p.apiPort}</span>
-        </li>
-      `).join('');
-    }
+        <div class="stat-card">
+          <div class="stat-card-title">Convergence</div>
+          <div class="stat-row">
+            <span class="stat-label">Msgs/sec</span>
+            <span class="stat-value accent" id="bm-ae">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Latency</span>
+            <span class="stat-value accent" id="bm-ae-ms">—</span>
+          </div>
+          <div class="convergence-bar-wrap">
+            <div class="convergence-bar" id="conv-bar"></div>
+          </div>
+        </div>
 
-    function setStatus(online) {
-      statusBadge.className = 'badge ' + (online ? 'online' : 'offline');
-      statusText.textContent = online ? 'Online' : 'Offline';
-    }
+        <div class="stat-card">
+          <div class="stat-card-title">Bandwidth</div>
+          <div class="stat-row">
+            <span class="stat-label">Digest</span>
+            <span class="stat-value yellow" id="bm-digest">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Delta</span>
+            <span class="stat-value yellow" id="bm-delta">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Savings</span>
+            <span class="stat-value green" id="bm-savings">—</span>
+          </div>
+        </div>
 
-    // ── Initial load ─────────────────────────────────────────────────────────
+        <div class="stat-card">
+          <div class="stat-card-title">Store</div>
+          <div class="stat-row">
+            <span class="stat-label">Messages</span>
+            <span class="stat-value" id="st-count">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Unsynced</span>
+            <span class="stat-value" id="st-unsynced">—</span>
+          </div>
+        </div>
 
-    async function loadMessages() {
-      try {
-        const msgs = await fetch('/api/messages').then((r) => r.json());
-        msgs.slice().reverse().forEach(renderMessage);
-      } catch (_) { /* offline */ }
-    }
+        <button class="run-bench-btn" id="run-bench-btn">⚡ Run Live Benchmark</button>
 
-    async function loadStatus() {
-      try {
-        const s = await fetch('/api/status').then((r) => r.json());
-        setStatus(s.online);
-        renderPeers(s.peers);
-      } catch (_) { /* offline */ }
-    }
+      </div>
+    </aside>
+  </main>
+</div><!-- end .app-shell -->
 
-    loadMessages();
-    loadStatus();
+<!-- Toast container -->
+<div id="toast"></div>
 
-    // ── Socket events ─────────────────────────────────────────────────────────
+<script src="/socket.io/socket.io.js"></script>
+<script>
+'use strict';
 
-    socket.on('message:new',   (msg) => renderMessage(msg));
-    socket.on('status:change', (s)   => setStatus(s.online));
-    socket.on('peer:new',      ()    => loadStatus());
-    socket.on('peer:lost',     ()    => loadStatus());
-    socket.on('sync:done',     ()    => {
-      // Reload to show updated sync flags.
-      messagesEl.innerHTML = '';
-      loadMessages();
+// ── State ─────────────────────────────────────────────────────────────────────
+const socket    = io();
+const myName    = () => document.querySelector('input[name=sender]').value.trim() || 'Anonymous';
+const seenIds   = new Set();   // dedup real-time messages vs initial load
+let   totalMsgs = 0;
+let   unsyncedCount = 0;
+
+// ── Element refs ──────────────────────────────────────────────────────────────
+const messagesEl  = document.getElementById('messages');
+const peersEl     = document.getElementById('peers-list');
+const statusBadge = document.getElementById('status-badge');
+const statusText  = document.getElementById('status-text');
+const tierPill    = document.getElementById('tier-pill');
+const nodeIdVal   = document.getElementById('node-id-val');
+const queueBadge  = document.getElementById('queue-badge');
+const queueCount  = document.getElementById('queue-count');
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function esc(str) {
+  return String(str)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function fmtBytes(b) {
+  if (b < 1024)       return b + ' B';
+  if (b < 1024*1024)  return (b/1024).toFixed(1) + ' KB';
+  return (b/(1024*1024)).toFixed(2) + ' MB';
+}
+
+function fmtOps(n) {
+  if (n >= 1000) return (n/1000).toFixed(1) + 'k/s';
+  return n + '/s';
+}
+
+function toast(msg, type = 'info', durationMs = 3500) {
+  const el = document.createElement('div');
+  el.className = 'toast-item' + (type === 'success' ? ' success' : type === 'warn' ? ' warn' : '');
+  el.textContent = msg;
+  document.getElementById('toast').appendChild(el);
+  setTimeout(() => el.remove(), durationMs);
+}
+
+function updateQueueBadge() {
+  if (unsyncedCount > 0) {
+    queueBadge.classList.add('visible');
+    queueCount.textContent = unsyncedCount;
+  } else {
+    queueBadge.classList.remove('visible');
+  }
+}
+
+// ── Message rendering ─────────────────────────────────────────────────────────
+
+function renderMessage(msg, { fromPeer = false, prepend = false } = {}) {
+  if (seenIds.has(msg.id)) return;
+  seenIds.add(msg.id);
+
+  const mine = msg.sender === myName();
+  const div  = document.createElement('div');
+  div.className = 'msg'
+    + (mine     ? ' mine'      : '')
+    + (fromPeer ? ' from-peer' : '')
+    + (!msg.synced ? ' queued' : '');
+  div.dataset.msgId = msg.id;
+
+  div.innerHTML = `
+    <div class="msg-header">
+      <span class="sender">${esc(msg.sender)}</span>
+      <span class="type-tag">${esc(msg.type || 'general')}</span>
+      <span class="lamport">L${msg.lamport || 0}</span>
+      <span>${new Date(msg.timestamp).toLocaleTimeString()}</span>
+    </div>
+    <div class="msg-body">${esc(msg.content)}</div>
+    <div class="msg-footer">
+      <span class="sync-status ${msg.synced ? 'synced' : 'pending'}">
+        ${msg.synced ? '✅ synced' : '⏳ queued'}
+      </span>
+    </div>
+  `;
+
+  if (prepend) {
+    messagesEl.insertBefore(div, messagesEl.firstChild);
+  } else {
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  if (!msg.synced) unsyncedCount++;
+  totalMsgs++;
+  updateStoreStats();
+}
+
+function updateStoreStats() {
+  const el = document.getElementById('st-count');
+  const el2 = document.getElementById('st-unsynced');
+  if (el) el.textContent = totalMsgs;
+  if (el2) {
+    el2.textContent = unsyncedCount;
+    el2.style.color = unsyncedCount > 0 ? 'var(--orange)' : 'var(--green)';
+  }
+  updateQueueBadge();
+}
+
+// ── Peer rendering ────────────────────────────────────────────────────────────
+
+function renderPeers(peers) {
+  if (!peers || peers.length === 0) {
+    peersEl.innerHTML = '<li class="empty-hint">No peers yet.<br>Start another node on the same machine or LAN.</li>';
+    return;
+  }
+  peersEl.innerHTML = peers.map((p) => `
+    <li>
+      <span class="peer-id">${esc(p.nodeId)}</span>
+      <span class="peer-addr">${esc(p.ip)}:${p.apiPort}</span>
+    </li>
+  `).join('');
+}
+
+// ── Status & tier ─────────────────────────────────────────────────────────────
+
+function setStatus(online, tier) {
+  statusBadge.className = 'status-pill ' + (online ? 'online' : 'offline');
+  statusText.textContent = online ? 'Online' : 'Offline';
+  if (tier !== undefined) setTier(tier);
+}
+
+function setTier(tier) {
+  if (!tier) tier = 'none';
+  const label = { none: '⚫ No network', lan: '🟢 LAN', hotspot: '🟡 Hotspot', wan: '🔵 WAN' };
+  tierPill.textContent = label[tier] || tier;
+  tierPill.className = 'tier-pill ' + tier;
+}
+
+// ── Initial load ──────────────────────────────────────────────────────────────
+
+async function loadMessages() {
+  try {
+    const msgs = await fetch('/api/messages').then((r) => r.json());
+    totalMsgs    = 0;
+    unsyncedCount = 0;
+    // Server returns newest-first; display oldest-first.
+    [...msgs].reverse().forEach((m) => renderMessage(m));
+  } catch (_) { /* offline – that's fine */ }
+}
+
+async function loadStatus() {
+  try {
+    const s = await fetch('/api/status').then((r) => r.json());
+    setStatus(s.online, s.tier);
+    renderPeers(s.peers);
+    if (s.nodeId) nodeIdVal.textContent = s.nodeId;
+  } catch (_) {}
+}
+
+loadMessages();
+loadStatus();
+
+// ── Socket events ─────────────────────────────────────────────────────────────
+
+socket.on('message:new', (msg) => {
+  const fromPeer = msg.sender !== myName();
+  renderMessage(msg, { fromPeer });
+  if (fromPeer) {
+    toast(`📨 New message from ${msg.sender}`, 'info', 2500);
+    // Animate convergence bar briefly.
+    const bar = document.getElementById('conv-bar');
+    if (bar) { bar.style.width = '100%'; setTimeout(() => { bar.style.width = '0%'; }, 1200); }
+  }
+});
+
+socket.on('status:change', (s) => {
+  setStatus(s.online, s.tier);
+  if (s.online) toast('🌐 Internet available — syncing…', 'success');
+  else          toast('📴 Internet unavailable — messages stored locally', 'warn');
+});
+
+socket.on('peer:new',  (p) => {
+  loadStatus();
+  if (p && p.nodeId) toast(`🔗 Peer joined: ${p.nodeId}`, 'info', 3000);
+});
+socket.on('peer:lost', (p) => {
+  loadStatus();
+  if (p && p.nodeId) toast(`👋 Peer left: ${p.nodeId}`, 'warn', 3000);
+});
+
+socket.on('sync:done', (results) => {
+  const ok = (results || []).filter((r) => r.ok).length;
+  toast(`✅ Sync complete: ${ok}/${(results||[]).length} pushed`, 'success');
+  // Refresh to update sync flags.
+  seenIds.clear();
+  totalMsgs = 0;
+  unsyncedCount = 0;
+  messagesEl.innerHTML = '';
+  loadMessages();
+});
+
+// ── Send ──────────────────────────────────────────────────────────────────────
+
+document.getElementById('send-btn').addEventListener('click', sendMessage);
+document.querySelector('textarea[name=content]').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendMessage();
+});
+
+async function sendMessage() {
+  const content = document.querySelector('textarea[name=content]').value.trim();
+  const sender  = myName();
+  const type    = document.querySelector('select[name=type]').value;
+  if (!content) return;
+
+  const btn = document.getElementById('send-btn');
+  btn.disabled = true;
+  try {
+    await fetch('/api/messages', {
+      method : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body   : JSON.stringify({ content, sender, type }),
     });
+    document.querySelector('textarea[name=content]').value = '';
+  } finally {
+    btn.disabled = false;
+  }
+}
 
-    // ── Send ──────────────────────────────────────────────────────────────────
+// ── Manual sync ───────────────────────────────────────────────────────────────
 
-    document.getElementById('send-btn').addEventListener('click', sendMessage);
-    document.querySelector('textarea[name=content]').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendMessage();
-    });
+document.getElementById('sync-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('sync-btn');
+  btn.textContent = '⬆ Syncing…';
+  btn.disabled = true;
+  try {
+    const { results } = await fetch('/api/sync', { method: 'POST' }).then((r) => r.json());
+    const ok = (results || []).filter((r) => r.ok).length;
+    toast(results && results.length
+      ? `✅ ${ok}/${results.length} messages synced`
+      : '✅ Nothing to sync', 'success');
+  } catch (_) {
+    toast('❌ Sync failed — no remote URL configured?', 'warn');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⬆ Sync';
+  }
+});
 
-    async function sendMessage() {
-      const content = document.querySelector('textarea[name=content]').value.trim();
-      const sender  = myName();
-      const type    = document.querySelector('select[name=type]').value;
-      if (!content) return;
+// ── Demo guide toggle ─────────────────────────────────────────────────────────
 
-      document.getElementById('send-btn').disabled = true;
-      try {
-        await fetch('/api/messages', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content, sender, type }),
-        });
-        document.querySelector('textarea[name=content]').value = '';
-      } finally {
-        document.getElementById('send-btn').disabled = false;
-      }
-    }
+document.getElementById('demo-close-btn').addEventListener('click', () => {
+  document.getElementById('demo-banner').classList.add('collapsed');
+});
+document.getElementById('demo-toggle-btn').addEventListener('click', () => {
+  document.getElementById('demo-banner').classList.toggle('collapsed');
+});
 
-    // ── Manual sync ───────────────────────────────────────────────────────────
+// ── Live benchmark ────────────────────────────────────────────────────────────
 
-    document.getElementById('sync-btn').addEventListener('click', async () => {
-      const btn = document.getElementById('sync-btn');
-      btn.textContent = '⬆ Syncing…';
-      btn.disabled = true;
-      try {
-        const { results } = await fetch('/api/sync', { method: 'POST' }).then((r) => r.json());
-        const ok = (results || []).filter((r) => r.ok).length;
-        btn.textContent = results && results.length
-          ? `✅ ${ok}/${results.length} synced`
-          : '⬆ Sync Now';
-      } catch (_) {
-        btn.textContent = '❌ Sync failed';
-      } finally {
-        btn.disabled = false;
-        setTimeout(() => { btn.textContent = '⬆ Sync Now'; }, 3000);
-      }
-    });
-  </script>
+async function runBenchmark() {
+  const btn = document.getElementById('run-bench-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Running…';
+
+  document.getElementById('bm-write').textContent = '…';
+  document.getElementById('bm-read').textContent  = '…';
+  document.getElementById('bm-ae').textContent    = '…';
+  document.getElementById('bm-ae-ms').textContent = '…';
+  document.getElementById('bm-digest').textContent = '…';
+  document.getElementById('bm-delta').textContent  = '…';
+  document.getElementById('bm-savings').textContent = '…';
+
+  try {
+    const r = await fetch('/api/benchmark?writeN=100&readN=50&aeN=50').then((res) => res.json());
+    document.getElementById('bm-write').textContent = fmtOps(r.write.opsPerSec);
+    document.getElementById('bm-read').textContent  = fmtOps(r.read.opsPerSec);
+    document.getElementById('bm-ae').textContent    = fmtOps(r.antiEntropy.msgsPerSec);
+    document.getElementById('bm-ae-ms').textContent = r.antiEntropy.durationMs + ' ms';
+    document.getElementById('bm-digest').textContent = fmtBytes(r.bandwidth.digestBytes);
+    document.getElementById('bm-delta').textContent  = fmtBytes(r.bandwidth.deltaBytes);
+    const savings = r.bandwidth.deltaBytes > 0
+      ? Math.round((1 - r.bandwidth.digestBytes / r.bandwidth.totalBytes) * 100)
+      : 0;
+    document.getElementById('bm-savings').textContent = savings + '%';
+
+    // Animate convergence bar to show it working.
+    const bar = document.getElementById('conv-bar');
+    if (bar) { bar.style.width = '100%'; setTimeout(() => { bar.style.width = '0%'; }, 1500); }
+
+    toast('📊 Benchmark complete!', 'success', 2500);
+  } catch (_) {
+    toast('⚠ Benchmark failed', 'warn');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⚡ Run Live Benchmark';
+  }
+}
+
+document.getElementById('run-bench-btn').addEventListener('click', runBenchmark);
+// Run once on page load so the panel is populated immediately.
+setTimeout(runBenchmark, 800);
+</script>
 </body>
 </html>
