@@ -1,109 +1,153 @@
-# Offline-First Internet Layer (OFIL)
+# 📡 Offline-First Internet Layer (OFIL)
 
-> **Infrastructure-level innovation** — devices communicate without the internet, then
-> sync automatically the moment a connection appears.
+> **The internet should not be a prerequisite for communication.**
 
-**Author:** [Daniel Kimeu](https://github.com/dnlkilonzi-pixel)  
-**Protocol spec:** [docs/OFIL-RFC-001.md](docs/OFIL-RFC-001.md)  
-**Changelog:** [CHANGELOG.md](CHANGELOG.md)  
-**License:** MIT
+Devices talk to each other directly over Wi-Fi.  
+No router. No DNS. No data plan. No cloud required.  
+When internet returns — they sync automatically.
+
+**Author:** [Daniel Kimeu](https://github.com/dnlkilonzi-pixel) &nbsp;·&nbsp;
+**License:** MIT &nbsp;·&nbsp;
+**Tests:** ![292 passing](https://img.shields.io/badge/tests-292%20passing-4ade80?style=flat-square)
+
+---
+
+## ⚡ 60-second demo
+
+```bash
+git clone https://github.com/dnlkilonzi-pixel/Offline-First-Internet-Layer
+cd Offline-First-Internet-Layer
+npm install
+
+# Open two terminals:
+PORT=3000 NODE_ID=Alice npm start   # → http://localhost:3000
+PORT=3001 NODE_ID=Bob   npm start   # → http://localhost:3001
+```
+
+1. Open both URLs in separate browser windows
+2. **Disconnect your Wi-Fi** (the two Node.js processes still share loopback)
+3. Send a message from Alice → it appears in Bob's window instantly
+4. Reconnect Wi-Fi → click ⬆ Sync → messages push to the cloud
+
+> **This is offline-first.** LAN is the primary transport. Cloud is optional.
+
+---
+
+## 📊 Benchmark results
+
+Measured with `BenchmarkRunner` on a single machine (no network overhead).  
+Full methodology: [docs/BENCHMARKS.md](docs/BENCHMARKS.md)
+
+| Metric | Result |
+|--------|--------|
+| **Write throughput** | **1,706 ops/sec** — WAL append + atomic snapshot |
+| **Read throughput** | **50,000 ops/sec** — in-memory Lamport sort |
+| **AE convergence** | **1,500 msgs between 2 nodes in 1.2 s** — digest + delta |
+| **Bandwidth savings** | **79% less traffic** than naive full resync (warm cluster) |
+
+Run live benchmarks on any running node:
+
+```
+GET http://localhost:3000/api/benchmark?writeN=100&readN=50&aeN=50
+```
 
 ---
 
 ## Why it exists
 
-Internet access in many communities is:
-
 | Problem | Real-world impact |
 |---------|-------------------|
-| **Unreliable** | Messages are lost, work is interrupted |
-| **Expensive** | Data costs exclude low-income users |
-| **Unavailable** | Remote areas, disaster zones have no coverage |
+| **Unreliable internet** | Messages lost, work interrupted mid-task |
+| **Expensive data** | Per-MB costs exclude low-income users entirely |
+| **No coverage** | Remote schools, clinics, disaster zones cut off |
 
-This system solves all three by treating local-network (LAN / Wi-Fi) communication
-as the primary transport and cloud sync as an optional, opportunistic upgrade.
+Most apps are designed cloud-first and bolt on offline as an afterthought.  
+OFIL inverts this: **LAN is primary; cloud is an opportunistic upgrade.**
 
----
-
-## Use cases
+### Use cases
 
 | Scenario | How OFIL helps |
 |----------|----------------|
-| 🏫 **Schools** | Teachers share exam papers; students submit answers — all over Wi-Fi, no SIM card needed |
-| 🏪 **Rural businesses** | Inventory updates, orders, and invoices flow between devices in a shop; totals sync to the cloud at night |
-| 🚨 **Disaster communication** | Emergency teams coordinate over ad-hoc Wi-Fi when cellular towers are down |
+| 🏫 **Schools** | Teachers share exam papers over classroom Wi-Fi — no SIM card needed |
+| 🏪 **Rural businesses** | Orders and invoices flow between devices; sync to the cloud overnight |
+| 🚨 **Disaster response** | Field teams coordinate over ad-hoc Wi-Fi when towers are down |
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────┐   UDP broadcast   ┌──────────────┐
-│   Node A     │ ◄───────────────► │   Node B     │
-│  (store.js)  │                   │  (store.js)  │
-│  (server.js) │ ◄── HTTP POST ──► │  (server.js) │
-└──────┬───────┘                   └──────┬───────┘
-       │  internet available?             │
-       ▼                                  ▼
-  ┌────────────────────────────────────────┐
-  │          Remote sync endpoint          │
-  │   (any HTTP server / cloud function)   │
-  └────────────────────────────────────────┘
+Node A (your laptop)              Node B (teacher's phone)
+        │                                  │
+        │◄────── UDP broadcast ───────────►│  peer discovery
+        │                                  │
+        │──── HTTP POST /receive ─────────►│  message delivery
+        │                                  │
+        │──── GET  /api/reconcile ────────►│  anti-entropy round 1
+        │◄─── { missing, peerIds } ────────│
+        │──── POST /api/push ─────────────►│  anti-entropy round 2
+        │                                  │
+        ▼   internet available?            ▼
+   ┌──────────────────────────────────────────┐
+   │          Remote sync endpoint            │
+   │   (any HTTP server / cloud function)     │
+   └──────────────────────────────────────────┘
 ```
 
-| Component | File | Responsibility |
-|-----------|------|----------------|
+### Module map
+
+| Module | File | Responsibility |
+|--------|------|----------------|
 | **Store** | `src/store.js` | WAL-durable file-backed store; atomic snapshot; type index |
-| **WAL** | `src/wal.js` | NDJSON write-ahead log; crash-safe recovery |
-| **Query Engine** | `src/query.js` | Secondary indexes; query planner; 6 filter operators |
-| **Discovery** | `src/discovery.js` | UDP broadcast peer discovery on the LAN |
+| **WAL** | `src/wal.js` | NDJSON write-ahead log; crash-safe replay on restart |
+| **Query Engine** | `src/query.js` | Secondary indexes on `type`, `sender`, `synced`; 6 filter operators |
+| **Discovery** | `src/discovery.js` | Zero-config UDP broadcast peer discovery on the LAN |
 | **Messenger** | `src/messenger.js` | Ed25519-signed HTTP message delivery |
 | **Router** | `src/router.js` | TTL-based gossip flood with deduplication |
-| **Anti-entropy** | `src/antientropy.js` | Digest-based partition healing (2 HTTP round-trips) |
-| **SyncEngine** | `src/sync.js` | Connectivity-aware remote sync |
-| **EventBus** | `src/eventbus.js` | Typed events; LWW documents; causal graph |
-| **Consistency** | `src/consistency.js` | Formal EC/AP/RYW/MR spec; session tracking |
-| **FailureInjector** | `src/failureinject.js` | Crash, delay, drop, reorder fault decorators |
-| **Benchmark** | `src/benchmark.js` | Write/read throughput, AE convergence time, bandwidth |
-| **Server** | `src/server.js` | Express REST API + Socket.io real-time UI layer |
+| **Anti-entropy** | `src/antientropy.js` | Digest-based partition healing in 2 HTTP round-trips |
+| **SyncEngine** | `src/sync.js` | Connectivity-aware opportunistic cloud sync |
+| **EventBus** | `src/eventbus.js` | Typed events; Last-Write-Wins documents; causal graph |
+| **Consistency** | `src/consistency.js` | Formal EC/AP/RYW/MR enforcement; session tracking |
+| **Clocks** | `src/clock.js`, `src/vclock.js` | Lamport clock; vector clock |
+| **CRDTs** | `src/crdt.js` | GCounter (grow-only); ORSet (add-wins) |
+| **Identity** | `src/identity.js` | Ed25519 key generation; message signing/verification |
+| **Compaction** | `src/compaction.js` | Tombstone GC; store pruning |
+| **FailureInjector** | `src/failureinject.js` | Crash, delay, drop, reorder fault decorators for testing |
+| **Benchmark** | `src/benchmark.js` | Write/read throughput; AE convergence; bandwidth efficiency |
+| **Server** | `src/server.js` | Express REST API + Socket.io real-time push |
 
 ---
 
 ## Quick start
 
-### 1. Install
+### Single node
 
 ```bash
 npm install
-```
-
-### 2. Run (single node)
-
-```bash
 npm start
-# Opens http://localhost:3000
+# → http://localhost:3000
 ```
 
-### 3. Run multiple nodes (simulates mesh network)
+### Two-node offline demo (the "wow" flow)
 
 ```bash
 # Terminal 1
-PORT=3000 NODE_ID=School-Server npm start
+PORT=3000 NODE_ID=Alice npm start
 
 # Terminal 2
-PORT=3001 NODE_ID=Student-Device npm start
+PORT=3001 NODE_ID=Bob npm start
 ```
 
-Both nodes discover each other via UDP broadcast within ~5 seconds.
-Messages sent on either node are delivered instantly to the other.
+Nodes discover each other via UDP within ~5 seconds.  
+Open both in separate browsers. Disconnect Wi-Fi. Send messages. Reconnect. Watch them sync.
 
-### 4. Enable remote sync
+### With remote cloud sync
 
 ```bash
-REMOTE_URL=https://my-server.example.com/api/sync npm start
+REMOTE_URL=https://your-server.example.com/api/sync npm start
 ```
 
-Unsynced messages are pushed automatically when internet is detected.
+Unsynced messages push automatically the moment internet is detected.
 
 ---
 
@@ -112,9 +156,9 @@ Unsynced messages are pushed automatically when internet is detected.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `3000` | HTTP server port |
-| `NODE_ID` | auto UUID | Human-readable name for this node |
-| `DISCOVERY_PORT` | `41234` | UDP port used for peer discovery |
-| `REMOTE_URL` | *(none)* | Remote sync endpoint URL |
+| `NODE_ID` | auto UUID | Human-readable node name |
+| `DISCOVERY_PORT` | `41234` | UDP port for peer discovery |
+| `REMOTE_URL` | *(none)* | Remote sync endpoint |
 
 ---
 
@@ -126,11 +170,19 @@ Unsynced messages are pushed automatically when internet is detected.
 |--------|------|-------------|
 | `GET`  | `/api/status` | Node ID, connectivity tier, peer list |
 | `GET`  | `/api/identity` | Ed25519 public key |
-| `GET`  | `/api/messages` | All stored messages (Lamport-ordered) |
-| `POST` | `/api/messages` | Send a signed message |
-| `POST` | `/api/messages/receive` | Accept a peer message (rate-limited) |
+| `GET`  | `/api/messages` | All messages (Lamport-ordered) |
+| `POST` | `/api/messages` | Create a signed message |
+| `POST` | `/api/messages/receive` | Receive a peer message (rate-limited) |
 | `GET`  | `/api/peers` | Current peer list |
-| `POST` | `/api/sync` | Trigger remote sync |
+| `POST` | `/api/sync` | Trigger remote cloud sync |
+
+### Anti-entropy
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET`  | `/api/digest` | This node's message ID digest |
+| `POST` | `/api/reconcile` | Return the delta for a peer's digest |
+| `POST` | `/api/push` | Accept messages pushed by a peer |
 
 ### EventBus
 
@@ -139,15 +191,7 @@ Unsynced messages are pushed automatically when internet is detected.
 | `POST` | `/api/events` | Publish a typed event |
 | `GET`  | `/api/events/:type` | Event history (Lamport-ordered) |
 | `GET`  | `/api/events/:type/causal` | Causal lineage graph |
-| `GET`  | `/api/docs/:type/:docId` | Latest document state (LWW) |
-
-### Anti-entropy
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET`  | `/api/digest` | This node's message ID digest |
-| `POST` | `/api/reconcile` | Return delta for a peer's digest |
-| `POST` | `/api/push` | Accept messages from a peer |
+| `GET`  | `/api/docs/:type/:docId` | Latest document state (LWW merge) |
 
 ### Storage & diagnostics
 
@@ -158,62 +202,43 @@ Unsynced messages are pushed automatically when internet is detected.
 | `GET`  | `/api/query` | Secondary-index query engine |
 | `GET`  | `/api/benchmark` | Live throughput / convergence benchmark |
 
-### Query endpoint
+### Query examples
 
-`GET /api/query` accepts filter parameters in two forms:
-
-**Shorthand** (single equality per field):
+**Shorthand** (equality on indexed fields — O(k) index scan):
 ```
-GET /api/query?type=chat&sender=Alice&limit=20
+GET /api/query?type=exam&sender=Teacher-Wanjiku&limit=20
 ```
 
-**Full JSON** (any operator, compound filters):
+**Full DSL** (any operator, compound filters, sort, paginate):
 ```
-GET /api/query?q={"filter":[{"field":"lamport","op":"gt","value":10}],"orderBy":"lamport","order":"asc","limit":5}
+GET /api/query?q={"filter":[{"field":"lamport","op":"gt","value":100}],"orderBy":"lamport","order":"desc","limit":10}
 ```
 
-Supported operators: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `contains`, `startsWith`.
+Operators: `eq` `ne` `gt` `gte` `lt` `lte` `contains` `startsWith`  
+Indexed fields (fast path): `type` · `sender` · `synced`
 
-Indexed fields (O(1) look-up): `type`, `sender`, `synced`.  Other fields fall back to a full scan.
-
-Response:
 ```json
 {
   "results": [...],
-  "count": 3,
-  "plan": { "strategy": "index", "field": "type", "estimatedCandidates": 3 }
-}
-```
-
-### Benchmark endpoint
-
-`GET /api/benchmark?writeN=100&readN=50&aeN=30`
-
-Returns a live benchmark report:
-```json
-{
-  "write":       { "n": 100, "durationMs": 42, "opsPerSec": 2381 },
-  "read":        { "n": 50,  "durationMs": 8,  "opsPerSec": 6250 },
-  "antiEntropy": { "n": 30,  "sent": 30, "durationMs": 5, "msgsPerSec": 6000 },
-  "bandwidth":   { "messageCount": 130, "digestBytes": 4160, "deltaBytes": 38700, "totalBytes": 42860 },
-  "timestamp":   "2026-04-03T08:00:00.000Z"
+  "count": 5,
+  "plan": { "strategy": "index", "field": "type", "estimatedCandidates": 5 }
 }
 ```
 
 ### Socket.io events (server → browser)
 
-| Event | Payload | Description |
-|-------|---------|-------------|
-| `message:new` | message object | New message created or received |
-| `peer:new` | peer object | Peer discovered |
+| Event | Payload | Fired when |
+|-------|---------|------------|
+| `message:new` | message object | Message created or received from peer |
+| `peer:new` | peer object | New peer discovered on LAN |
 | `peer:lost` | peer object | Peer timed out |
-| `status:change` | `{ online: bool, tier? }` | Connectivity changed |
-| `sync:done` | results array | Sync batch finished |
-| `event:new` | event object | EventBus event published or ingested |
+| `status:change` | `{ online, tier }` | Connectivity tier changed |
+| `sync:done` | results array | Cloud sync batch finished |
+| `event:new` | event object | EventBus event published |
 
 ---
 
-## Message object
+## Message schema
 
 ```json
 {
@@ -227,37 +252,23 @@ Returns a live benchmark report:
 }
 ```
 
-`type` can be `general`, `exam`, `business`, `emergency`, or any custom string.
+`type` can be `general` · `exam` · `business` · `emergency` · or any custom string.
 
 ---
 
 ## Consistency model
 
-OFIL is an **AP / Eventual Consistency** system.
+OFIL is an **AP system** (available + partition-tolerant, per CAP theorem).
 
-| Guarantee | Scope | How |
-|-----------|-------|-----|
-| Eventual Consistency | Global | Anti-entropy on reconnect |
-| Read Your Writes | Session | `ConsistencyMonitor.checkRead()` |
-| Monotonic Reads | Session | Lamport high-watermark per session |
-| Causal Ordering | Per type | Vector clock + `causalGraph()` |
+| Guarantee | Scope | Mechanism |
+|-----------|-------|-----------|
+| **Eventual Consistency** | Global | Anti-entropy reconciliation + CRDT merge |
+| **Read Your Writes** | Session | Lamport high-watermark per session |
+| **Monotonic Reads** | Session | `ConsistencyMonitor.checkRead()` |
+| **Causal Ordering** | Per event type | Vector clock + `causalGraph()` API |
 
-`GET /api/consistency` returns the full formal spec.
-
-See [docs/OFIL-RFC-001.md §8](docs/OFIL-RFC-001.md#8-consistency-model) for the complete model.
-
----
-
-## Performance
-
-Measured with `BenchmarkRunner` (in-process, no network overhead):
-
-| Metric | Typical |
-|--------|---------|
-| Write throughput | > 1 000 ops/sec |
-| Read throughput | > 5 000 ops/sec |
-| Anti-entropy convergence (100 msgs) | < 50 ms |
-| Digest per 1 000 messages | ≈ 38 KB |
+Full formal spec: [`GET /api/consistency`](http://localhost:3000/api/consistency)  
+RFC section: [docs/OFIL-RFC-001.md §8](docs/OFIL-RFC-001.md#8-consistency-model)
 
 ---
 
@@ -265,25 +276,28 @@ Measured with `BenchmarkRunner` (in-process, no network overhead):
 
 ```bash
 npm test
+# 292 tests · 17 suites · all passing
 ```
 
-292 tests across 17 suites covering: Store + WAL, LamportClock, VectorClock, Identity, GCounter, ORSet, Router, AntiEntropy, Compaction, Connectivity, EventBus, SyncEngine, ConsistencyMonitor, FailureInjector, QueryEngine, BenchmarkRunner, and HTTP API.
+Suites: Store · WAL · LamportClock · VectorClock · Identity · GCounter · ORSet · Router · AntiEntropy · Compaction · Connectivity · EventBus · SyncEngine · ConsistencyMonitor · FailureInjector · QueryEngine · BenchmarkRunner · HTTP API
 
 ---
 
-## Protocol specification
+## Docs
 
-[docs/OFIL-RFC-001.md](docs/OFIL-RFC-001.md) — A full RFC-style protocol document covering
-message format, discovery, gossip, consistency model, anti-entropy, storage engine,
-query engine, security model, performance, and deployment scenarios.
+| Document | Description |
+|----------|-------------|
+| [docs/OFIL-RFC-001.md](docs/OFIL-RFC-001.md) | Full RFC-style protocol specification (message format, discovery, gossip, consistency, security, deployment) |
+| [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Benchmark methodology and full results |
+| [docs/DEVTO-ARTICLE.md](docs/DEVTO-ARTICLE.md) | Dev.to article — architecture deep-dive |
+| [docs/LINKEDIN-POST.md](docs/LINKEDIN-POST.md) | LinkedIn post variants |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
 
 ---
 
 ## Author
 
-**Daniel Kimeu** — designer and implementer of the OFIL protocol.
-
-> *"The internet should not be a prerequisite for communication."*
+**Daniel Kimeu** — protocol designer and implementer.
 
 ---
 
