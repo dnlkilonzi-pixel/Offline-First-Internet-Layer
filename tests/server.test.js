@@ -7,6 +7,7 @@ const request = require('supertest');
 const Store = require('../src/store');
 const LamportClock = require('../src/clock');
 const EventBus = require('../src/eventbus');
+const AntiEntropy = require('../src/antientropy');
 const { createServer } = require('../src/server');
 
 function tmpFile() {
@@ -34,6 +35,9 @@ function makeApp(filePath, opts = {}) {
   const eventBus = opts.eventBus !== false
     ? new EventBus(store, new LamportClock(), 'test-node')
     : undefined;
+  const antientropy = opts.antientropy !== false
+    ? new AntiEntropy(store, 'test-node')
+    : undefined;
   const { app, httpServer } = createServer({
     store,
     discovery,
@@ -43,8 +47,9 @@ function makeApp(filePath, opts = {}) {
     router: opts.router || null,
     eventBus,
     connectivity: null,
+    antientropy,
   });
-  return { app, httpServer, store, eventBus };
+  return { app, httpServer, store, eventBus, antientropy };
 }
 
 describe('HTTP API', () => {
@@ -53,10 +58,11 @@ describe('HTTP API', () => {
   let httpServer;
   let store;
   let eventBus;
+  let antientropy;
 
   beforeEach(() => {
     filePath = tmpFile();
-    ({ app, httpServer, store, eventBus } = makeApp(filePath));
+    ({ app, httpServer, store, eventBus, antientropy } = makeApp(filePath));
   });
 
   afterEach(async () => {
@@ -210,6 +216,66 @@ describe('HTTP API', () => {
     const res = await request(app).get('/api/docs/products/item-1');
     expect(res.status).toBe(200);
     expect(res.body.payload).toEqual({ name: 'Pencil', price: 10 });
+  });
+
+  // ── Causal graph endpoint ───────────────────────────────────────────────────
+  test('GET /api/events/:type/causal returns a causal graph object', async () => {
+    await request(app).post('/api/events').send({ type: 'log', payload: { n: 1 } });
+    await request(app).post('/api/events').send({ type: 'log', payload: { n: 2 } });
+    const res = await request(app).get('/api/events/log/causal');
+    expect(res.status).toBe(200);
+    expect(typeof res.body).toBe('object');
+    // Each key is an event ID mapped to an array of parent IDs.
+    for (const parents of Object.values(res.body)) {
+      expect(Array.isArray(parents)).toBe(true);
+    }
+  });
+
+  // ── Anti-entropy endpoints ─────────────────────────────────────────────────
+  test('GET /api/digest returns an IDs array', async () => {
+    await request(app).post('/api/messages').send({ content: 'hi', sender: 'A' });
+    const res = await request(app).get('/api/digest');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.ids)).toBe(true);
+    expect(res.body.ids).toHaveLength(1);
+  });
+
+  test('POST /api/reconcile returns missing messages and peer IDs', async () => {
+    await request(app).post('/api/messages').send({ content: 'hi', sender: 'A' });
+    const res = await request(app)
+      .post('/api/reconcile')
+      .send({ ids: [] }); // peer knows nothing
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.missing)).toBe(true);
+    expect(res.body.missing).toHaveLength(1);
+    expect(Array.isArray(res.body.peerIds)).toBe(true);
+  });
+
+  test('POST /api/reconcile returns nothing when peer is already up to date', async () => {
+    const m = await store.save({ content: 'x', sender: 'A' });
+    const res = await request(app)
+      .post('/api/reconcile')
+      .send({ ids: [m.id] });
+    expect(res.status).toBe(200);
+    expect(res.body.missing).toHaveLength(0);
+  });
+
+  test('POST /api/push ingests messages and returns accepted count', async () => {
+    const res = await request(app)
+      .post('/api/push')
+      .send({ messages: [{ id: 'pushed-1', content: 'from peer', sender: 'B', type: 'general' }] });
+    expect(res.status).toBe(200);
+    expect(res.body.accepted).toBe(1);
+    expect(store.size).toBe(1);
+  });
+
+  test('POST /api/push returns 503 when anti-entropy not configured', async () => {
+    const fp2 = tmpFile();
+    const { app: app2, httpServer: hs2 } = makeApp(fp2, { antientropy: false });
+    const res = await request(app2).post('/api/push').send({ messages: [] });
+    expect(res.status).toBe(503);
+    await new Promise((r) => hs2.close(r));
+    try { fs.unlinkSync(fp2); } catch (_) { /* ignore */ }
   });
 });
 

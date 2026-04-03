@@ -31,6 +31,11 @@
  *   - Otherwise we accept and update our document index.
  *   Tie-break: lower sender id wins (deterministic).
  *
+ * ── Vector clock (causality) ─────────────────────────────────────────────────
+ *   Every event carries a `vclock` snapshot so that causal relationships can
+ *   be queried after the fact.  bus.causalGraph(type) returns a Map<id, id[]>
+ *   of direct parent events — the "what caused what?" answer.
+ *
  * Events emitted by the bus itself:
  *   '<type>'  (event) – An event of that type was published or ingested.
  *   'event'   (event) – Any event.
@@ -40,6 +45,7 @@
 const EventEmitter = require('events');
 const { v4: uuidv4 } = require('uuid');
 const LamportClock = require('./clock');
+const VectorClock = require('./vclock');
 
 class EventBus extends EventEmitter {
   /**
@@ -53,6 +59,7 @@ class EventBus extends EventEmitter {
     this._clock = clock || new LamportClock();
     this._nodeId = nodeId || 'local';
     this._docs = new Map(); // `${type}:${docId}` → latest accepted event
+    this._vclock = new VectorClock();
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -72,6 +79,7 @@ class EventBus extends EventEmitter {
       throw new Error('Event type is required.');
     }
     const lamport = this._clock.tick();
+    const vclock = this._vclock.increment(this._nodeId);
     const id = opts.docId ? `${type}:${opts.docId}` : uuidv4();
     const event = {
       id,
@@ -80,6 +88,7 @@ class EventBus extends EventEmitter {
       docId: opts.docId || null,
       version: opts.version !== undefined ? opts.version : lamport,
       lamport,
+      vclock,
       timestamp: new Date().toISOString(),
       sender: this._nodeId,
       synced: false,
@@ -113,6 +122,7 @@ class EventBus extends EventEmitter {
    */
   async ingest(event) {
     this._clock.update(event.lamport || 0);
+    this._vclock.update(event.vclock || {});
 
     if (event.docId) {
       const key = `${event.type}:${event.docId}`;
@@ -169,6 +179,50 @@ class EventBus extends EventEmitter {
         try { return JSON.parse(m.content); } catch (_) { return m; }
       })
       .sort(LamportClock.compare);
+  }
+
+  /**
+   * Build the causal lineage graph for all events of a given type.
+   *
+   * Returns a plain-object version of VectorClock.buildCausalGraph():
+   *   { [eventId]: [parentEventId, ...] }
+   *
+   * An entry's parent IDs are the IDs of the events that directly
+   * happened-before it (the "what caused what?" answer).
+   *
+   * @param {string} type
+   * @returns {Promise<Object<string, string[]>>}
+   */
+  async causalGraph(type) {
+    const events = await this.history(type);
+    const graph = VectorClock.buildCausalGraph(events);
+    const result = {};
+    for (const [id, parents] of graph) {
+      result[id] = parents;
+    }
+    return result;
+  }
+
+  /**
+   * Rebuild the in-memory document index from the backing store.
+   *
+   * Call this after external reconciliation (e.g. anti-entropy) has added
+   * messages directly to the store, bypassing the EventBus publish/ingest path.
+   *
+   * @returns {Promise<void>}
+   */
+  async reindex() {
+    const all = await this._store.getAll();
+    for (const msg of all) {
+      let evt = null;
+      try { evt = JSON.parse(msg.content); } catch (_) { continue; }
+      if (evt && evt.docId) {
+        this._updateDocIndex(evt);
+      }
+      if (evt && evt.vclock) {
+        this._vclock.update(evt.vclock);
+      }
+    }
   }
 
   // ── Private ───────────────────────────────────────────────────────────────

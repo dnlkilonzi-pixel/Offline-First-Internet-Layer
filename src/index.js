@@ -16,12 +16,14 @@
 
 const Store = require('./store');
 const Discovery = require('./discovery');
-const { Messenger } = require('./messenger');
+const { Messenger, postJson } = require('./messenger');
 const Router = require('./router');
 const Identity = require('./identity');
 const ConnectivityMonitor = require('./connectivity');
 const SyncEngine = require('./sync');
 const EventBus = require('./eventbus');
+const AntiEntropy = require('./antientropy');
+const Compaction = require('./compaction');
 const { createServer } = require('./server');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -38,6 +40,8 @@ const messenger = new Messenger(discovery, store, router);
 const connectivity = new ConnectivityMonitor(discovery);
 const syncEngine = new SyncEngine(store, { remoteUrl: REMOTE_URL, connectivity });
 const eventBus = new EventBus(store, store.clock, discovery.nodeId);
+const antientropy = new AntiEntropy(store, discovery.nodeId);
+const compaction = new Compaction(store);
 
 // Build HTTP server.
 const { httpServer } = createServer({
@@ -49,6 +53,7 @@ const { httpServer } = createServer({
   router,
   eventBus,
   connectivity,
+  antientropy,
 });
 
 // Start listening.
@@ -60,6 +65,8 @@ httpServer.listen(PORT, () => {
   discovery.start(PORT);
   connectivity.start();
   syncEngine.start();
+  // Schedule log compaction every 5 minutes; keep max 10 000 messages.
+  compaction.schedule(5 * 60_000, { maxCount: 10_000 });
 
   console.log('[OFIL] Peer discovery started. Waiting for peers…');
 });
@@ -73,9 +80,24 @@ discovery.on('peer:lost', (p) =>
 discovery.on('error', (err) =>
   console.warn(`[OFIL] Discovery error (non-fatal): ${err.message}`)
 );
-connectivity.on('tier:change', (tier, prev) =>
-  console.log(`[OFIL] Connectivity tier: ${prev} → ${tier}`)
-);
+connectivity.on('tier:change', (tier, prev) => {
+  console.log(`[OFIL] Connectivity tier: ${prev} → ${tier}`);
+  // Partition healing: when we reconnect (any tier above NONE), run anti-entropy
+  // with all known peers so we catch up on messages we missed while partitioned.
+  if (prev === 'none' && tier !== 'none') {
+    const peers = discovery.peers;
+    if (peers.length > 0) {
+      console.log(`[OFIL] Partition healed – running anti-entropy with ${peers.length} peer(s)…`);
+      Promise.all(
+        peers.map((peer) =>
+          antientropy.syncWithPeer(peer, postJson).catch(() => { /* non-fatal */ })
+        )
+      ).then(() => {
+        eventBus.reindex().catch(() => { /* non-fatal */ });
+      });
+    }
+  }
+});
 syncEngine.on('online', () => console.log('[OFIL] Internet available – syncing…'));
 syncEngine.on('offline', () => console.log('[OFIL] Internet unavailable.'));
 syncEngine.on('sync:done', (results) => {
@@ -91,5 +113,6 @@ function gracefulShutdown() {
   discovery.stop();
   connectivity.stop();
   syncEngine.stop();
+  compaction.stop();
   httpServer.close(() => process.exit(0));
 }

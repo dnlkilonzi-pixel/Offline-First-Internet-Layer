@@ -14,7 +14,11 @@
  * POST /api/sync              – Manually trigger a remote sync
  * POST /api/events            – Publish a typed event via EventBus
  * GET  /api/events/:type      – Event history for a type (Lamport-ordered)
+ * GET  /api/events/:type/causal – Causal lineage graph for a type
  * GET  /api/docs/:type/:docId – Latest document state
+ * GET  /api/digest            – Anti-entropy: this node's message ID digest
+ * POST /api/reconcile         – Anti-entropy: return messages peer is missing
+ * POST /api/push              – Anti-entropy: accept messages from a peer
  *
  * Socket.io events (server → client)
  * ───────────────────────────────────
@@ -42,7 +46,7 @@ const receiveRateLimiter = rateLimit({
   message: { error: 'Too many requests. Slow down.' },
 });
 
-function createServer({ store, discovery, messenger, syncEngine, identity, router, eventBus, connectivity }) {
+function createServer({ store, discovery, messenger, syncEngine, identity, router, eventBus, connectivity, antientropy }) {
   const app = express();
   const httpServer = http.createServer(app);
   const io = new SocketIoServer(httpServer, { cors: { origin: '*' } });
@@ -211,6 +215,65 @@ function createServer({ store, discovery, messenger, syncEngine, identity, route
       return res.status(404).json({ error: 'Document not found.' });
     }
     return res.json(doc);
+  });
+
+  app.get('/api/events/:type/causal', async (req, res) => {
+    if (!eventBus) {
+      return res.status(503).json({ error: 'EventBus not configured.' });
+    }
+    try {
+      const graph = await eventBus.causalGraph(req.params.type);
+      return res.json(graph);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Anti-entropy endpoints ─────────────────────────────────────────────────
+
+  app.get('/api/digest', async (req, res) => {
+    if (!antientropy) {
+      return res.status(503).json({ error: 'Anti-entropy not configured.' });
+    }
+    try {
+      const ids = await antientropy.digest();
+      return res.json({ ids });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/reconcile', async (req, res) => {
+    if (!antientropy) {
+      return res.status(503).json({ error: 'Anti-entropy not configured.' });
+    }
+    try {
+      const { ids: peerIds } = req.body || {};
+      const [missing, peerIds_] = await Promise.all([
+        antientropy.missing(peerIds || []),
+        antientropy.digest(),
+      ]);
+      return res.json({ missing, peerIds: peerIds_ });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/push', async (req, res) => {
+    if (!antientropy) {
+      return res.status(503).json({ error: 'Anti-entropy not configured.' });
+    }
+    try {
+      const { messages } = req.body || {};
+      const result = await antientropy.reconcile(messages || []);
+      // Rebuild EventBus doc index after ingesting reconciled messages.
+      if (eventBus && result.accepted > 0) {
+        eventBus.reindex().catch(() => { /* non-fatal */ });
+      }
+      return res.json(result);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
   });
 
   // ── Wire external events to Socket.io ─────────────────────────────────────

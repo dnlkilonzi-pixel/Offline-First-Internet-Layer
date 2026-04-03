@@ -194,4 +194,86 @@ describe('EventBus', () => {
     expect(hist[0].payload.msg).toBe('first');
     expect(hist[1].payload.msg).toBe('second');
   });
+
+  // ── vclock ────────────────────────────────────────────────────────────────
+
+  test('publish attaches a vclock to each event', async () => {
+    const { bus, filePath: fp } = makeEventBus('node-A');
+    filePath = fp;
+    const e1 = await bus.publish('msg', {});
+    expect(e1.vclock).toBeDefined();
+    expect(typeof e1.vclock).toBe('object');
+    expect(e1.vclock['node-A']).toBe(1);
+  });
+
+  test('vclock increments with each local publish', async () => {
+    const { bus, filePath: fp } = makeEventBus('node-X');
+    filePath = fp;
+    const e1 = await bus.publish('msg', {});
+    const e2 = await bus.publish('msg', {});
+    expect(e2.vclock['node-X']).toBeGreaterThan(e1.vclock['node-X']);
+  });
+
+  test('ingest updates the local vclock from the remote event', async () => {
+    const { bus, filePath: fp } = makeEventBus('node-A');
+    filePath = fp;
+    const remoteEvent = {
+      id: 'remote-1',
+      type: 'chat',
+      payload: { text: 'hi' },
+      docId: null,
+      lamport: 5,
+      vclock: { 'node-B': 3 },
+      timestamp: new Date().toISOString(),
+      sender: 'node-B',
+      synced: false,
+    };
+    await bus.ingest(remoteEvent);
+    // After ingesting, publishing a new local event should carry a vclock that
+    // reflects node-B's contribution (from merge).
+    const local = await bus.publish('chat', {});
+    expect(local.vclock['node-B']).toBe(3); // preserved via update
+    expect(local.vclock['node-A']).toBe(1); // local component incremented
+  });
+
+  // ── causalGraph ───────────────────────────────────────────────────────────
+
+  test('causalGraph returns an object keyed by event ID', async () => {
+    const { bus, filePath: fp } = makeEventBus('node-A');
+    filePath = fp;
+    await bus.publish('ev', {});
+    await bus.publish('ev', {});
+    const graph = await bus.causalGraph('ev');
+    expect(typeof graph).toBe('object');
+    for (const parents of Object.values(graph)) {
+      expect(Array.isArray(parents)).toBe(true);
+    }
+  });
+
+  test('causalGraph: sequential local events form a chain', async () => {
+    const { bus, filePath: fp } = makeEventBus('node-A');
+    filePath = fp;
+    const e1 = await bus.publish('log', { n: 1 });
+    const e2 = await bus.publish('log', { n: 2 });
+    const e3 = await bus.publish('log', { n: 3 });
+    const graph = await bus.causalGraph('log');
+    expect(graph[e1.id]).toEqual([]);
+    expect(graph[e2.id]).toEqual([e1.id]);
+    expect(graph[e3.id]).toEqual([e2.id]);
+  });
+
+  // ── reindex ───────────────────────────────────────────────────────────────
+
+  test('reindex rebuilds doc index from store', async () => {
+    const { bus, store: s, filePath: fp } = makeEventBus('node-A');
+    filePath = fp;
+    // Publish directly via the bus (sets up the doc index).
+    await bus.publish('items', { v: 1 }, { docId: 'x' });
+    // Simulate a new bus instance that missed the event (no in-memory index).
+    const bus2 = new EventBus(s, new LamportClock(), 'node-A');
+    expect(bus2.doc('items', 'x')).toBeNull(); // not yet indexed
+    await bus2.reindex();
+    expect(bus2.doc('items', 'x')).not.toBeNull();
+    expect(bus2.doc('items', 'x').payload.v).toBe(1);
+  });
 });

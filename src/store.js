@@ -134,6 +134,17 @@ class Store {
   }
 
   /**
+   * Remove messages by ID.  Used by Compaction to prune superseded entries.
+   * @param {string[]} ids
+   * @returns {void}
+   */
+  deleteMessages(ids) {
+    const toRemove = new Set(ids);
+    this._messages = this._messages.filter((m) => !toRemove.has(m.id));
+    this._persist();
+  }
+
+  /**
    * Remove all messages (useful for tests).
    * @returns {Promise<void>}
    */
