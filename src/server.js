@@ -19,6 +19,8 @@
  * GET  /api/digest            – Anti-entropy: this node's message ID digest
  * POST /api/reconcile         – Anti-entropy: return messages peer is missing
  * POST /api/push              – Anti-entropy: accept messages from a peer
+ * GET  /api/consistency       – Formal consistency model declaration
+ * POST /api/snapshot          – Flush atomic snapshot and truncate WAL
  *
  * Socket.io events (server → client)
  * ───────────────────────────────────
@@ -35,6 +37,7 @@ const path = require('path');
 const { Server: SocketIoServer } = require('socket.io');
 const rateLimit = require('express-rate-limit');
 const Identity = require('./identity');
+const ConsistencyMonitor = require('./consistency');
 
 // Rate limiter for the peer-receive endpoint: max 60 requests per minute per IP.
 // This prevents flooding the node with forged or spam messages.
@@ -271,6 +274,25 @@ function createServer({ store, discovery, messenger, syncEngine, identity, route
         eventBus.reindex().catch(() => { /* non-fatal */ });
       }
       return res.json(result);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Consistency model endpoint ─────────────────────────────────────────────
+
+  app.get('/api/consistency', (req, res) => {
+    return res.json({ guarantees: ConsistencyMonitor.GUARANTEES });
+  });
+
+  // ── Storage snapshot endpoint ──────────────────────────────────────────────
+
+  app.post('/api/snapshot', (req, res) => {
+    try {
+      if (typeof store.snapshot === 'function') {
+        store.snapshot();
+      }
+      return res.json({ ok: true });
     } catch (err) {
       return res.status(500).json({ error: err.message });
     }

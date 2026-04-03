@@ -20,6 +20,8 @@ describe('Store', () => {
 
   afterEach(() => {
     try { fs.unlinkSync(filePath); } catch (_) { /* ignore */ }
+    try { fs.unlinkSync(filePath + '.wal'); } catch (_) { /* ignore */ }
+    try { fs.unlinkSync(filePath + '.tmp'); } catch (_) { /* ignore */ }
   });
 
   test('saves a valid message and returns it', async () => {
@@ -102,5 +104,33 @@ describe('Store', () => {
   test('accepts custom message type', async () => {
     const msg = await store.save({ content: 'Exam Q1', sender: 'Teacher', type: 'exam' });
     expect(msg.type).toBe('exam');
+  });
+
+  test('getByType returns only messages of the specified type', async () => {
+    await store.save({ content: 'chat 1', sender: 'A', type: 'chat' });
+    await store.save({ content: 'chat 2', sender: 'B', type: 'chat' });
+    await store.save({ content: 'system event', sender: 'sys', type: 'system' });
+    const chatMsgs = store.getByType('chat');
+    expect(chatMsgs).toHaveLength(2);
+    expect(chatMsgs.every((m) => m.type === 'chat')).toBe(true);
+  });
+
+  test('getByType returns empty array for unknown type', () => {
+    expect(store.getByType('nonexistent')).toEqual([]);
+  });
+
+  test('getByType returns messages in Lamport-descending order', async () => {
+    await store.save({ content: 'first', sender: 'A', type: 'log' });
+    await store.save({ content: 'second', sender: 'A', type: 'log' });
+    const logs = store.getByType('log');
+    expect(logs[0].content).toBe('second');
+    expect(logs[1].content).toBe('first');
+  });
+
+  test('type index is correct after deleteMessages', async () => {
+    const m1 = await store.save({ content: 'a', sender: 'A', type: 'log' });
+    await store.save({ content: 'b', sender: 'A', type: 'log' });
+    store.deleteMessages([m1.id]);
+    expect(store.getByType('log')).toHaveLength(1);
   });
 });

@@ -87,6 +87,10 @@ class Compaction extends EventEmitter {
 
     if (toRemove.size > 0) {
       this._store.deleteMessages([...toRemove]);
+      // Truncate the WAL after compaction so it does not grow unboundedly.
+      if (typeof this._store.snapshot === 'function') {
+        this._store.snapshot();
+      }
       this.emit('compact:done', { removed: toRemove.size });
     }
     return toRemove.size;
@@ -130,6 +134,10 @@ class Compaction extends EventEmitter {
 
     if (toRemove.size > 0) {
       this._store.deleteMessages([...toRemove]);
+      // Truncate the WAL after trimming.
+      if (typeof this._store.snapshot === 'function') {
+        this._store.snapshot();
+      }
       this.emit('trim:done', { removed: toRemove.size });
     }
     return toRemove.size;

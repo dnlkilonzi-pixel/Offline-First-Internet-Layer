@@ -24,6 +24,7 @@ const SyncEngine = require('./sync');
 const EventBus = require('./eventbus');
 const AntiEntropy = require('./antientropy');
 const Compaction = require('./compaction');
+const ConsistencyMonitor = require('./consistency');
 const { createServer } = require('./server');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -42,6 +43,7 @@ const syncEngine = new SyncEngine(store, { remoteUrl: REMOTE_URL, connectivity }
 const eventBus = new EventBus(store, store.clock, discovery.nodeId);
 const antientropy = new AntiEntropy(store, discovery.nodeId);
 const compaction = new Compaction(store);
+const consistencyMonitor = new ConsistencyMonitor(); // eslint-disable-line no-unused-vars
 
 // Build HTTP server.
 const { httpServer } = createServer({

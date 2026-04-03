@@ -157,7 +157,7 @@ You can also trigger sync manually via the **⬆ Sync Now** button in the UI.
 npm test
 ```
 
-167 tests covering the Store, LamportClock, VectorClock, Identity, GCounter, ORSet, Router, AntiEntropy, Compaction, ConnectivityMonitor, EventBus, SyncEngine, and HTTP API.
+241 tests covering the Store (incl. WAL integration), LamportClock, VectorClock, Identity, GCounter, ORSet, Router, AntiEntropy, Compaction, ConsistencyMonitor, FailureInjector, EventBus, SyncEngine, and HTTP API.
 
 ---
 

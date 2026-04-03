@@ -68,6 +68,8 @@ describe('HTTP API', () => {
   afterEach(async () => {
     await new Promise((r) => httpServer.close(r));
     try { fs.unlinkSync(filePath); } catch (_) { /* ignore */ }
+    try { fs.unlinkSync(filePath + '.wal'); } catch (_) { /* ignore */ }
+    try { fs.unlinkSync(filePath + '.tmp'); } catch (_) { /* ignore */ }
   });
 
   // ── GET /api/status ────────────────────────────────────────────────────────
@@ -276,6 +278,23 @@ describe('HTTP API', () => {
     expect(res.status).toBe(503);
     await new Promise((r) => hs2.close(r));
     try { fs.unlinkSync(fp2); } catch (_) { /* ignore */ }
+    try { fs.unlinkSync(fp2 + '.wal'); } catch (_) { /* ignore */ }
+  });
+
+  // ── Consistency model endpoint ────────────────────────────────────────────
+  test('GET /api/consistency returns the formal guarantee declaration', async () => {
+    const res = await request(app).get('/api/consistency');
+    expect(res.status).toBe(200);
+    expect(res.body.guarantees).toBeDefined();
+    expect(res.body.guarantees.model).toBeTruthy();
+    expect(Array.isArray(res.body.guarantees.sessionGuarantees)).toBe(true);
+  });
+
+  // ── Snapshot endpoint ─────────────────────────────────────────────────────
+  test('POST /api/snapshot returns ok:true', async () => {
+    const res = await request(app).post('/api/snapshot');
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
   });
 });
 
