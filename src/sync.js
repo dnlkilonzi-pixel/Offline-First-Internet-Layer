@@ -1,18 +1,26 @@
 'use strict';
 
 /**
- * sync.js – Internet connectivity monitor + sync engine.
+ * sync.js – Internet connectivity monitor + multi-tier sync engine.
  *
- * Periodically checks whether the internet is reachable by attempting
- * a TCP connection to a well-known host.  When connectivity is restored
- * all unsynced messages are pushed to the configured remote endpoint.
+ * When a ConnectivityMonitor is provided the SyncEngine delegates all
+ * connectivity detection to it and maps each tier to a sync strategy:
+ *
+ *   WAN     → push unsynced messages to the remote endpoint immediately.
+ *   HOTSPOT → schedule a delayed batch push (opportunistic / DTN-style).
+ *   LAN     → local peer gossip is already handling replication; no remote push.
+ *   NONE    → queue locally; wait.
+ *
+ * When no ConnectivityMonitor is provided the engine falls back to its own
+ * TCP probe (original behaviour) for backward compatibility.
  *
  * Events emitted:
- *   'online'          – internet became reachable
- *   'offline'         – internet became unreachable
- *   'sync:start'      – batch sync run started
- *   'sync:done'       (results) – batch sync finished
- *   'sync:error'      (err) – individual sync error
+ *   'online'          – WAN or HOTSPOT connectivity became available.
+ *   'offline'         – Connectivity dropped below HOTSPOT.
+ *   'tier:change'     (tier, prev) – Forwarded from ConnectivityMonitor.
+ *   'sync:start'      – Batch sync run started.
+ *   'sync:done'       (results) – Batch sync finished.
+ *   'sync:error'      (err) – Individual sync error.
  */
 
 const net = require('net');
@@ -24,17 +32,20 @@ const CHECK_INTERVAL_MS = 10_000;
 const CHECK_HOST = '8.8.8.8';
 const CHECK_PORT = 53;
 const CHECK_TIMEOUT_MS = 3_000;
+// Delay before pushing when only a HOTSPOT (limited WAN) is available.
+const DEFAULT_HOTSPOT_DELAY_MS = 30_000;
 
 class SyncEngine extends EventEmitter {
   /**
    * @param {import('./store')} store    – Message store.
    * @param {object} [opts]
-   * @param {string}  [opts.remoteUrl]     – Full URL of the remote POST endpoint.
-   *   E.g. "https://my-server.example.com/api/sync"
-   * @param {number}  [opts.checkInterval] – ms between connectivity probes.
-   * @param {string}  [opts.checkHost]     – Host to probe (TCP).
-   * @param {number}  [opts.checkPort]     – Port to probe.
-   * @param {number}  [opts.checkTimeout]  – ms before a probe attempt times out.
+   * @param {string}  [opts.remoteUrl]       – Full URL of the remote POST endpoint.
+   * @param {number}  [opts.checkInterval]   – ms between connectivity probes (standalone mode).
+   * @param {string}  [opts.checkHost]       – Host to probe (standalone mode).
+   * @param {number}  [opts.checkPort]       – Port to probe (standalone mode).
+   * @param {number}  [opts.checkTimeout]    – Probe timeout ms (standalone mode).
+   * @param {number}  [opts.hotspotDelayMs]  – Delay before syncing on HOTSPOT tier.
+   * @param {import('./connectivity')} [opts.connectivity] – Multi-tier monitor.
    */
   constructor(store, opts = {}) {
     super();
@@ -44,34 +55,89 @@ class SyncEngine extends EventEmitter {
     this._checkHost = opts.checkHost || CHECK_HOST;
     this._checkPort = opts.checkPort || CHECK_PORT;
     this._checkTimeout = opts.checkTimeout || CHECK_TIMEOUT_MS;
+    this._hotspotDelayMs = opts.hotspotDelayMs || DEFAULT_HOTSPOT_DELAY_MS;
+    this._connectivity = opts.connectivity || null;
     this._online = false;
     this._syncing = false;
     this._timer = null;
+    this._hotspotTimer = null;
   }
 
-  /** Current connectivity state. */
+  /** Current connectivity state (true for HOTSPOT or WAN). */
   get isOnline() {
     return this._online;
   }
 
-  /** Start the periodic connectivity check. */
+  /** Start the engine. */
   start() {
-    this._timer = setInterval(() => this._check(), this._checkInterval);
-    // Allow Node.js to exit even if the timer is still running.
-    this._timer.unref();
-    // Run an immediate check so the UI reflects state quickly.
-    this._check();
+    if (this._connectivity) {
+      this._attachConnectivityMonitor();
+    } else {
+      // Standalone mode: own TCP probe.
+      this._timer = setInterval(() => this._check(), this._checkInterval);
+      this._timer.unref();
+      this._check();
+    }
   }
 
-  /** Stop the periodic check. */
+  /** Stop all timers. */
   stop() {
     if (this._timer) {
       clearInterval(this._timer);
       this._timer = null;
     }
+    if (this._hotspotTimer) {
+      clearTimeout(this._hotspotTimer);
+      this._hotspotTimer = null;
+    }
   }
 
   // ── Private ───────────────────────────────────────────────────────────────
+
+  /** Wire up a ConnectivityMonitor instead of our own probe. */
+  _attachConnectivityMonitor() {
+    const cm = this._connectivity;
+    const { TIERS } = require('./connectivity');
+
+    cm.on('tier:change', (tier, prev) => {
+      this.emit('tier:change', tier, prev);
+
+      const wasOnline = this._online;
+      this._online = tier === TIERS.WAN || tier === TIERS.HOTSPOT;
+
+      if (this._online && !wasOnline) {
+        this.emit('online');
+      } else if (!this._online && wasOnline) {
+        this.emit('offline');
+        this._cancelHotspotSync();
+      }
+
+      if (this._remoteUrl) {
+        if (tier === TIERS.WAN) {
+          this._cancelHotspotSync();
+          this._syncAll().catch((err) => this.emit('sync:error', err));
+        } else if (tier === TIERS.HOTSPOT) {
+          this._scheduleHotspotSync();
+        }
+      }
+    });
+  }
+
+  _scheduleHotspotSync() {
+    this._cancelHotspotSync();
+    this._hotspotTimer = setTimeout(() => {
+      this._syncAll().catch((err) => this.emit('sync:error', err));
+    }, this._hotspotDelayMs);
+  }
+
+  _cancelHotspotSync() {
+    if (this._hotspotTimer) {
+      clearTimeout(this._hotspotTimer);
+      this._hotspotTimer = null;
+    }
+  }
+
+  // ── Standalone probe (used when no ConnectivityMonitor provided) ──────────
 
   async _check() {
     const reachable = await this._probe();
@@ -105,6 +171,8 @@ class SyncEngine extends EventEmitter {
       socket.connect(this._checkPort, this._checkHost);
     });
   }
+
+  // ── Sync logic ────────────────────────────────────────────────────────────
 
   /**
    * Push all unsynced messages to the remote endpoint.
@@ -158,7 +226,6 @@ class SyncEngine extends EventEmitter {
       };
 
       const req = lib.request(options, (res) => {
-        // Drain the response so the socket is released.
         res.resume();
         res.on('end', () => {
           if (res.statusCode >= 200 && res.statusCode < 300) {

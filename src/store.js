@@ -4,7 +4,11 @@
  * store.js – File-backed message store.
  *
  * Every message has the shape:
- *   { id, content, sender, type, timestamp, synced }
+ *   { id, content, sender, type, timestamp, lamport, synced }
+ *
+ * The `lamport` field is a Lamport logical timestamp that enables
+ * deterministic, consistent ordering of messages across distributed nodes
+ * without relying on synchronised wall-clock time.
  *
  * Messages are persisted to a JSON file so they survive process restarts.
  * All writes are synchronous-on-the-critical-path but the public API is
@@ -15,6 +19,7 @@
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+const LamportClock = require('./clock');
 
 class Store {
   /**
@@ -24,6 +29,7 @@ class Store {
   constructor(filePath) {
     this._filePath = filePath || path.join(__dirname, '..', 'data', 'messages.json');
     this._messages = [];
+    this._clock = new LamportClock();
     this._load();
   }
 
@@ -41,6 +47,15 @@ class Store {
       if (fs.existsSync(this._filePath)) {
         const raw = fs.readFileSync(this._filePath, 'utf8');
         this._messages = JSON.parse(raw);
+        // Seed the Lamport clock from the maximum lamport value in stored messages
+        // so that new events are always ordered after persisted ones.
+        const maxLamport = this._messages.reduce(
+          (max, m) => (m.lamport !== undefined ? Math.max(max, m.lamport) : max),
+          0
+        );
+        if (maxLamport > 0) {
+          this._clock.update(maxLamport);
+        }
       }
     } catch (_) {
       this._messages = [];
@@ -63,12 +78,20 @@ class Store {
     if (!data || !data.content || !data.sender) {
       throw new Error('Message must have "content" and "sender".');
     }
+    // Advance the local Lamport clock: update from remote time if provided,
+    // otherwise tick for a local event.
+    const lamport =
+      data.lamport !== undefined
+        ? this._clock.update(data.lamport)
+        : this._clock.tick();
+
     const message = {
       id: data.id || uuidv4(),
       content: data.content,
       sender: data.sender,
       type: data.type || 'general',
       timestamp: data.timestamp || new Date().toISOString(),
+      lamport,
       synced: data.synced !== undefined ? data.synced : false,
     };
     // Avoid duplicate IDs when messages arrive from peers
@@ -80,13 +103,13 @@ class Store {
   }
 
   /**
-   * Return all messages, most-recent first.
+   * Return all messages ordered by Lamport timestamp descending
+   * (highest Lamport = most recent causal event = shown first in the UI).
+   * Ties broken by message id for a consistent total order.
    * @returns {Promise<object[]>}
    */
   async getAll() {
-    return [...this._messages].sort(
-      (a, b) => new Date(b.timestamp) - new Date(a.timestamp)
-    );
+    return [...this._messages].sort((a, b) => LamportClock.compare(b, a));
   }
 
   /**
@@ -122,6 +145,11 @@ class Store {
   /** Number of stored messages. */
   get size() {
     return this._messages.length;
+  }
+
+  /** The Lamport clock used by this store. */
+  get clock() {
+    return this._clock;
   }
 }
 

@@ -1,13 +1,17 @@
 'use strict';
 
 /**
- * messenger.js – Local P2P HTTP messaging.
+ * messenger.js – Local P2P HTTP messaging with gossip routing.
  *
- * Sends messages to discovered peers and returns delivery results.
+ * Sends messages to discovered peers using the Router's selective-forwarding
+ * rules: only peers that have not already seen the message (not in hops list)
+ * receive a copy, and the TTL is decremented before forwarding.
+ *
  * Failures are non-fatal: the caller decides whether to retry or queue.
  */
 
 const http = require('http');
+const Router = require('./router');
 
 /**
  * POST a JSON payload to `http://<ip>:<port><path>`.
@@ -60,24 +64,42 @@ function postJson(ip, port, urlPath, payload, timeoutMs = 5_000) {
 class Messenger {
   /**
    * @param {import('./discovery')} discovery  – Discovery instance for peer list.
-   * @param {import('./store')} store            – Store to persist received messages.
+   * @param {import('./store')}     store       – Store to persist received messages.
+   * @param {import('./router')}    [router]    – Gossip router (optional; falls back
+   *                                             to broadcasting to all peers).
    */
-  constructor(discovery, store) {
+  constructor(discovery, store, router) {
     this._discovery = discovery;
     this._store = store;
+    this._router = router || null;
   }
 
   /**
-   * Broadcast a message to all known peers.
-   * @param {object} message  – Fully-formed message object from the Store.
+   * Broadcast a locally-originated or forwarded message to eligible peers.
+   *
+   * When a Router is configured:
+   *   - Uses router.selectPeers() to skip peers that have already seen the message.
+   *   - Uses router.prepareForward() to decrement TTL and record this hop.
+   *
+   * @param {object} message  – Fully-formed message object (may include ttl/hops).
    * @returns {Promise<{ peer: object, ok: boolean, error?: string }[]>}
    */
   async broadcast(message) {
-    const peers = this._discovery.peers;
+    const allPeers = this._discovery.peers;
+    if (allPeers.length === 0) return [];
+
+    const peers = this._router
+      ? this._router.selectPeers(allPeers, message)
+      : allPeers;
+
     if (peers.length === 0) return [];
 
+    const forwardMsg = this._router
+      ? this._router.prepareForward(message)
+      : message;
+
     const results = await Promise.allSettled(
-      peers.map((peer) => this._sendToPeer(peer, message))
+      peers.map((peer) => this._sendToPeer(peer, forwardMsg))
     );
 
     return peers.map((peer, i) => {
