@@ -21,6 +21,8 @@
  * POST /api/push              – Anti-entropy: accept messages from a peer
  * GET  /api/consistency       – Formal consistency model declaration
  * POST /api/snapshot          – Flush atomic snapshot and truncate WAL
+ * GET  /api/query             – Secondary-index query engine
+ * GET  /api/benchmark         – Live throughput / convergence benchmark
  *
  * Socket.io events (server → client)
  * ───────────────────────────────────
@@ -38,6 +40,8 @@ const { Server: SocketIoServer } = require('socket.io');
 const rateLimit = require('express-rate-limit');
 const Identity = require('./identity');
 const ConsistencyMonitor = require('./consistency');
+const QueryEngine = require('./query');
+const BenchmarkRunner = require('./benchmark');
 
 // Rate limiter for the peer-receive endpoint: max 60 requests per minute per IP.
 // This prevents flooding the node with forged or spam messages.
@@ -53,6 +57,9 @@ function createServer({ store, discovery, messenger, syncEngine, identity, route
   const app = express();
   const httpServer = http.createServer(app);
   const io = new SocketIoServer(httpServer, { cors: { origin: '*' } });
+
+  // Initialise the query engine over the store.
+  const queryEngine = new QueryEngine(store);
 
   // ── Middleware ─────────────────────────────────────────────────────────────
   app.use(express.json());
@@ -293,6 +300,73 @@ function createServer({ store, discovery, messenger, syncEngine, identity, route
         store.snapshot();
       }
       return res.json({ ok: true });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Query engine endpoint ──────────────────────────────────────────────────
+
+  app.get('/api/query', (req, res) => {
+    try {
+      // Accept query as a URL-encoded JSON string: ?q={"filter":[...],"limit":20}
+      // Also accept individual shorthand parameters for simple equality look-ups:
+      //   ?type=chat&sender=Alice&limit=20&offset=0&order=asc
+      let q = {};
+      if (req.query.q) {
+        try { q = JSON.parse(req.query.q); } catch (_) {
+          return res.status(400).json({ error: 'Invalid JSON in "q" parameter.' });
+        }
+      } else {
+        // Build filter from shorthand query params.
+        const predicates = [];
+        if (req.query.type)   predicates.push({ field: 'type',   op: 'eq', value: req.query.type });
+        if (req.query.sender) predicates.push({ field: 'sender', op: 'eq', value: req.query.sender });
+        if (req.query.synced !== undefined) {
+          predicates.push({ field: 'synced', op: 'eq', value: req.query.synced === 'true' });
+        }
+        if (predicates.length) q.filter = predicates;
+        if (req.query.orderBy) q.orderBy = req.query.orderBy;
+        if (req.query.order)   q.order   = req.query.order;
+        if (req.query.limit)   q.limit   = parseInt(req.query.limit, 10);
+        if (req.query.offset)  q.offset  = parseInt(req.query.offset, 10);
+      }
+
+      // Rebuild secondary indexes in case messages were added externally.
+      queryEngine.rebuild();
+      const results = queryEngine.query(q);
+      const plan = queryEngine.explain(q);
+      return res.json({ results, count: results.length, plan });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Benchmark endpoint ────────────────────────────────────────────────────
+
+  app.get('/api/benchmark', async (req, res) => {
+    try {
+      // Use a separate in-memory-only store pair so the benchmark does not
+      // corrupt production data.  We create temp stores backed by /tmp files.
+      const os = require('os');
+      const fs = require('fs');
+      const path = require('path');
+      const Store = require('./store');
+      const BenchmarkRunner_ = require('./benchmark');
+      const ts = Date.now();
+      const fpA = path.join(os.tmpdir(), `ofil-bm-srv-A-${ts}.json`);
+      const fpB = path.join(os.tmpdir(), `ofil-bm-srv-B-${ts}.json`);
+      const sA = new Store(fpA);
+      const sB = new Store(fpB);
+      const runner = new BenchmarkRunner_();
+      const writeN  = req.query.writeN  ? parseInt(req.query.writeN,  10) : 100;
+      const readN   = req.query.readN   ? parseInt(req.query.readN,   10) : 50;
+      const aeN     = req.query.aeN     ? parseInt(req.query.aeN,     10) : 30;
+      const report = await runner.run(sA, sB, { writeN, readN, aeN });
+      // Cleanup temp files.
+      [fpA, fpB, fpA + '.wal', fpB + '.wal', fpA + '.tmp', fpB + '.tmp']
+        .forEach((f) => { try { fs.unlinkSync(f); } catch (_) { /* ignore */ } });
+      return res.json(report);
     } catch (err) {
       return res.status(500).json({ error: err.message });
     }

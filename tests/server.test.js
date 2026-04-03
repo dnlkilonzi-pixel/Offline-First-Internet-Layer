@@ -296,5 +296,48 @@ describe('HTTP API', () => {
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
   });
+
+  // ── Query engine endpoint ─────────────────────────────────────────────────
+  test('GET /api/query returns results and plan', async () => {
+    await store.save({ content: 'hello', sender: 'Alice', type: 'chat' });
+    const res = await request(app).get('/api/query?type=chat');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.results)).toBe(true);
+    expect(res.body.count).toBeGreaterThanOrEqual(1);
+    expect(res.body.plan).toBeDefined();
+    expect(res.body.plan.strategy).toBe('index');
+  });
+
+  test('GET /api/query with JSON q param works', async () => {
+    await store.save({ content: 'test', sender: 'Bob', type: 'general' });
+    const q = JSON.stringify({ filter: { field: 'sender', value: 'Bob' } });
+    const res = await request(app).get(`/api/query?q=${encodeURIComponent(q)}`);
+    expect(res.status).toBe(200);
+    expect(res.body.results.every((m) => m.sender === 'Bob')).toBe(true);
+  });
+
+  test('GET /api/query with invalid JSON returns 400', async () => {
+    const res = await request(app).get('/api/query?q=INVALID_JSON');
+    expect(res.status).toBe(400);
+  });
+
+  test('GET /api/query with no filter returns all messages', async () => {
+    await store.save({ content: 'a', sender: 'X', type: 'general' });
+    await store.save({ content: 'b', sender: 'Y', type: 'general' });
+    const res = await request(app).get('/api/query');
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBeGreaterThanOrEqual(2);
+  });
+
+  // ── Benchmark endpoint ────────────────────────────────────────────────────
+  test('GET /api/benchmark returns a report with write/read/antiEntropy/bandwidth', async () => {
+    const res = await request(app).get('/api/benchmark?writeN=5&readN=3&aeN=3');
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('write');
+    expect(res.body).toHaveProperty('read');
+    expect(res.body).toHaveProperty('antiEntropy');
+    expect(res.body).toHaveProperty('bandwidth');
+    expect(res.body.write.n).toBe(5);
+  }, 15000);
 });
 
