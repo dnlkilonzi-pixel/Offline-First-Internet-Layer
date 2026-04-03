@@ -1,0 +1,27 @@
+{
+  "name": "offline-first-internet-layer",
+  "version": "1.0.0",
+  "description": "Offline-first P2P communication layer: devices talk on a local network and sync to the cloud when internet returns.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "jest --forceExit --testTimeout=15000",
+    "lint": "eslint src/ tests/ --ext .js"
+  },
+  "keywords": ["offline-first", "p2p", "mesh", "sync"],
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.4",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^6.3.4",
+    "eslint": "^8.57.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": ["**/tests/**/*.test.js"]
+  }
+}
