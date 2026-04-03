@@ -12,6 +12,12 @@ When internet returns — they sync automatically.
 
 ---
 
+![OFIL demo UI — offline queue, live benchmarks, multi-type messages](https://github.com/user-attachments/assets/17e54aa6-672b-40a5-b2ad-325d3b2af766)
+
+*Messages from a classroom session queued offline (dashed orange) · live benchmarks: 7.7k write/s, 50k read/s, 82% bandwidth savings · zero cloud required*
+
+---
+
 ## ⚡ 60-second demo
 
 ```bash
